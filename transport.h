@@ -1,6 +1,7 @@
 #include <vector>
 #include <random>
 #include <omp.h>
+#include <iostream>
 
 #include <chrono>
 
