@@ -37,60 +37,124 @@
 
 #include "transport.h"
 
+using namespace transport;
 
 // testing on toy problems: random sampling and some rank1 point sets
-void testOT2D() {
+void test_optimal_transport_2d() {
 
 	// for random points: 
-	// 1k points in 0.05 s
-	// 4k points in 2 s
-	// 16k points in 16 s
-	// 65k points in 3 min
-	// 262k points: 19 min
+	// 1k points in 0.04 s
+	// 4k points in 0.8 s
+	// 16k points in 5 s
+	// 65k points in 13 s
+	// 262k points: 2 min 32 s
 
-	int N = 64 * 64;
+	int N = 64 * 64*4;  //number of points
 	OptimalTransport2D ot;
-	ot.N = N;
-	ot.V.samples.resize(N);
+
+
+	omp_set_num_threads(16);
 
 	std::default_random_engine engine;
 	std::uniform_real_distribution<double> uniform(0, 1);
 
-	Vector v(uniform(engine), uniform(engine));
+
+	ot.V.vertices.resize(N);
 	for (int i = 0; i < N; i++) {
-
-		ot.V.samples[i] = Vector(uniform(engine), uniform(engine));
-		//ot.V.samples[i] = Vector(v[0]*i-floor(v[0]*i), v[1] * i - floor(v[1] * i)); // crappy rank 1
+		ot.V.vertices[i] = Vector(uniform(engine), uniform(engine));
 	}
-
-	/*for (int i = 0; i < 64; i++) {
-		for (int j = 0; j < 64; j++) {
-			ot.V.samples[i * 64 + j] = Vector(i / 64.0 + 1. / 128., j / 64.0 + 1. / 128.); // regular grid
-		}
-	}*/
 
 	const auto start = std::chrono::steady_clock::now();
 
-	double squaredOTdist = ot.optimize();
+	double squaredOTdist = ot.optimize(100); //100 Newton iterations max.
 
 	const auto end = std::chrono::steady_clock::now();
 	const std::chrono::duration<double> elapsed_seconds = end - start;
 
 	std::cout << "elapsed time: " << elapsed_seconds.count() << "s\n";
 
-	std::cout << squaredOTdist << std::endl;
+	std::cout << "OT squared distance: "<<squaredOTdist << std::endl;
+	std::cout << "worst relative Voronoi cell area error: " << ot.V.worst_cell_area_relative_diff_percent() << "%"<<std::endl;
+	std::cout << "average relative Voronoi cell area error: " << ot.V.avg_cell_area_relative_diff_percent() << "%"<<std::endl;
 
-	ot.V.build();
-	ot.V.save_svg(ot.V.cells, "OTSmall.svg");
+
+	ot.V.save_svg("OT_result.svg", false, true, true);
 
 }
+
+
+// computes the weighted (or also unweighted) delaunay and its power diagram quite efficiently
+void test_power_diagram() {
+
+	// for random points with random weights of the form 1+uniform(0,1) (delaunay + dual): 
+	// 16k points: 0.008 s
+	// 64k points: 0.03 s
+	// 256k points: 0.127 s
+	// 1M points: 0.55 s
+	// 4M points: 2.4 s
+
+	// for unweighted points (slower because more polygons to construct : all vertices have one cell):
+	// 256k points: 1s
+	// 1M points: 4 s
+
+	std::default_random_engine engine;
+	std::uniform_real_distribution<double> uniform(0, 1);
+
+	engine.seed(1385);
+
+	Bowyer2D vd;
+	for (int i = 0; i < 1024*256; i++) { 	
+		vd.vertices.push_back(Vector(uniform(engine), uniform(engine)));
+		vd.weights.push_back(1+uniform(engine));
+	}
+
+
+	const auto start = std::chrono::steady_clock::now();
+	vd.compute_delaunay();
+	vd.compute_dual();
+
+	const auto end = std::chrono::steady_clock::now();
+	const std::chrono::duration<double> elapsed_seconds = end - start;
+
+	std::cout << "elapsed time: " << elapsed_seconds.count() << "s\n";
+
+
+	vd.save_svg("voronoi_delaunay.svg", true, true, true);
+}
+
+void test_OT_lloyd() {
+	std::default_random_engine engine;
+	std::uniform_real_distribution<double> uniform(0, 1);
+
+	engine.seed(1385);
+
+	OptimalTransport2D ot;
+
+	for (int i = 0; i < 1024; i++) {
+		ot.V.vertices.push_back(Vector(uniform(engine), uniform(engine)));
+	}
+
+	const auto start = std::chrono::steady_clock::now();
+	ot.ot_lloyd();
+	const auto end = std::chrono::steady_clock::now();
+	const std::chrono::duration<double> elapsed_seconds = end - start;
+
+	std::cout << "elapsed time: " << elapsed_seconds.count() << "s\n";
+
+
+	ot.V.save_svg("lloyd.svg", false, true, true);
+}
+
 
 
 
 int main(int argc, char* argv[]) {
 
 
-	testOT2D();
+	test_optimal_transport_2d();
+
+	//test_power_diagram();
+    //test_OT_lloyd();
 
 
 	return 0;
