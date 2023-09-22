@@ -184,6 +184,8 @@ namespace transport {
 	bool isInCircleLifted(const Vector& P, const Vector& A, const Vector& B, const Vector& C, double hP, double hA, double hB, double hC);
 
 
+	int getQuadrant(const Vector& p, double xMid, double yMid);
+
 	// Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric Predicates, JR Shewchuk DCG 1997
 	// Use expansion arithmetic to produce robust orientation predicates (not used for inCircle as it seems already much more robust)
 	// basic idea: if some operation is within precision limits, convert it to an approximate value and a remainder such that the sum of both is still the exact value.
@@ -274,12 +276,23 @@ namespace transport {
 
 
 
-	// the 2 functions below are by ChatGPT 4
-	// Convert a normalized double (in range [0, 1)) to its 64-bit integer representation
-	int64_t doubleToRawInt(double value);
+	// the 2 functions below are by ChatGPT 4	
+	int64_t doubleToRawInt(double value); // Convert a normalized double (in range [0, 1)) to its 64-bit integer representation
 	bool less_msb(int64_t x, int64_t y);
 
 
+	class Compare {
+	public:
+		Compare(const std::vector<Vector>& vertices, int axis) : vertices(vertices), axis(axis) {}
+
+		bool operator()(int i, int j) {
+			return vertices[i][axis] < vertices[j][axis];
+		}
+
+	private:
+		const std::vector<Vector>& vertices;
+		int axis;
+	};
 
 	// The Bowyer Watson algorithm to compute a Delaunay, and its dual
 	class Bowyer2D {
@@ -314,7 +327,7 @@ namespace transport {
 
 
 		////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-		//////// This part of the code below contains helpers for ordering vertices along a Morton curve                                             //////////////////////// 
+		//////// This part of the code below contains helpers for ordering vertices along a Morton curve and Hilbert curves                          //////////////////////// 
 		////////  It has been generated with ChatGPT 4 (no other part of the code is AI, apart from doubleToRawInt / less_msb)                       //////////////////////// 
 		///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -335,10 +348,41 @@ namespace transport {
 			return vertices[lhs][msd] < vertices[rhs][msd];
 		}
 
+		int hilbertSplit(std::vector<int>& permutation, int begin, int end, bool useX, bool invert) {
+			int middle = begin + (end - begin) / 2;
+
+			if (useX) {
+				std::nth_element(permutation.begin() + begin, permutation.begin() + middle, permutation.begin() + end,
+					[this, invert](int a, int b) { return invert ? vertices[a][0] > vertices[b][0] : vertices[a][0] < vertices[b][0]; });
+			} else {
+				std::nth_element(permutation.begin() + begin, permutation.begin() + middle, permutation.begin() + end,
+					[this, invert](int a, int b) { return invert ? vertices[a][1] > vertices[b][1] : vertices[a][1] < vertices[b][1]; });
+			}
+
+			return middle;
+		}
+
+		void hilbertSort(std::vector<int>& permutation, int begin, int end, bool useXFirst = true, bool invertFirst = false) {
+			if (end - begin <= 1) return;
+
+			int middle2 = hilbertSplit(permutation, begin, end, useXFirst, invertFirst);
+			int middle1 = hilbertSplit(permutation, begin, middle2, !useXFirst, !invertFirst);
+			int middle3 = hilbertSplit(permutation, middle2, end, !useXFirst, invertFirst);
+
+			hilbertSort(permutation, begin, middle1, !useXFirst, !invertFirst);
+			hilbertSort(permutation, middle1, middle2, useXFirst, invertFirst);
+			hilbertSort(permutation, middle2, middle3, useXFirst, invertFirst);
+			hilbertSort(permutation, middle3, end, !useXFirst, invertFirst);
+		}
+
+
 		//////////////////////////// end of ChatGPT Code /////////////////////////////////////////////////////////
 		//////////////////////////////////////////////////////////////////////////////////////////////////
 
-		void sort_vertices() {
+
+
+		// by default sort according to Hilbert curve ; otherwise Z curve
+		void sort_vertices(bool hilbert = true) {
 
 			lifted = weights.size() != 0;
 
@@ -346,8 +390,12 @@ namespace transport {
 			for (int i = 0; i < vertices.size(); i++) {
 				perm[i] = i;
 			}
-
-			std::sort(perm.begin(), perm.end(), [this](int a, int b) {return this->cmp_zorder(a, b); });
+			int maxDepth = std::ceil(std::log2(std::sqrt(perm.size())));
+			if (hilbert)
+				hilbertSort(perm, 0, perm.size());
+			else
+				std::sort(perm.begin(), perm.end(), [this](int a, int b) {return this->cmp_zorder(a, b); });
+			
 
 			sorted_vertices.resize(vertices.size());
 			sorted_weights.resize(vertices.size());
@@ -358,8 +406,6 @@ namespace transport {
 			std::transform(perm.begin(), perm.end(), sorted_vertices.begin(), [&](std::size_t i) { return vertices[i]; }); // sort the vertices according to the sorting permutation perm		
 		}
 
-
-		int curv = 0;
 
 		std::vector<int> perm; // permutation for ordering vertices along a morton curve.
 
@@ -476,7 +522,6 @@ namespace transport {
 				// Once the conflicted list of triangles is found, we remove them and stellate the hole (i.e., draw an edge between the inserted vertex and all vertices on the border of this hole)
 
 				Vector v = sorted_vertices[i];
-				curv = i;
 				TriangleP* ti = locateTriangleP(v);
 
 				if (lifted && !isInCircleP(i, ti)) continue; // dangling vertex : this can happen for weighted delaunay only (the corresponding power cell is empty)
@@ -687,7 +732,7 @@ namespace transport {
 		}
 
 		// save an svg file showing the delaunay, power diagram and vertices (all optionals)
-		void save_svg(std::string filename, bool save_triangulation = true, bool save_voronoi = true, bool save_samples = true) {
+		void save_svg(std::string filename, bool save_triangulation = true, bool save_voronoi = true, bool save_samples = true, bool save_ordering = false) {
 
 			FILE* f = fopen(filename.c_str(), "w+");
 			fprintf(f, "<svg xmlns = \"http://www.w3.org/2000/svg\" width = \"1000\" height = \"1000\">\n");
@@ -717,6 +762,14 @@ namespace transport {
 				fprintf(f, "</g>\n");
 			}
 
+			if (sorted_vertices.size() != 0 && save_ordering) {
+				fprintf(f, "<g>\n");
+				for (int i = 0; i < sorted_vertices.size()-1; i++) {
+					fprintf(f, "<line x1=\"%u\" y1=\"%u\" x2=\"%u\" y2=\"%u\" stroke=\"black\" stroke-width=\"1\"  />", (int)(sorted_vertices[i][0] * 1000), (int)(1000 - sorted_vertices[i][1] * 1000), (int)(sorted_vertices[i+1][0] * 1000), (int)(1000 - sorted_vertices[i+1][1] * 1000));
+				}
+				fprintf(f, "</g>\n");
+			}
+
 			if (vertices.size() != 0 && save_samples) {
 				fprintf(f, "<g>\n");
 				for (int i = 0; i < vertices.size(); i++) {
@@ -724,6 +777,7 @@ namespace transport {
 				}
 				fprintf(f, "</g>\n");
 			}
+
 
 			fprintf(f, "</svg>\n");
 
@@ -929,7 +983,7 @@ namespace transport {
 		// finally, more efficient to pre-store the Hessian than computing on the fly
 		void precompute_hessian() {
 
-#pragma omp parallel for
+//#pragma omp parallel for
 			for (int i = 0; i < N; i++) {
 
 				double result = 0;
@@ -983,7 +1037,9 @@ namespace transport {
 
 			size_t k = 0;
 			HessianValuesCRS_row[0] = 0;
+			size_t totalnnz = 0;
 			for (int i = 0; i < N; i++) {
+				totalnnz += HessianValues[i].size();
 				for (int j = 0; j < HessianValues[i].size(); j++) {
 					HessianValuesCRS_val[k] = HessianValues[i][j].second;
 					HessianValuesCRS_col[k] = HessianValues[i][j].first;
@@ -992,28 +1048,68 @@ namespace transport {
 				HessianValuesCRS_row[i + 1] = k;
 			}
 
+			// better load balancing of nnz between threads
+			int cumNnz = 0;
+			rowIdx[0] = 0;
+			int block = 1;
+			int maxThread = omp_get_max_threads();
+			for (int i = 0; i < N; i++) {
+				cumNnz+= HessianValues[i].size();
+				if (cumNnz>=(block* totalnnz)/ maxThread) { // 100 elements over 3 threads would give 0-32 33-65 66-100  (33+33+34)
+					rowIdx[block] = i;
+					block++;
+				}				
+			}
+			rowIdx[maxThread] = N;
+
 		}
+
+		// for debugging purposes 
+		void saveHessianSparse(std::string filename) {
+
+			FILE* f = fopen(filename.c_str(), "w+");
+			for (int i = 0; i < N; i++) {
+				for (int j = 0; j < HessianValues[i].size(); j++) {
+					fprintf(f, "%u %u %e\n", i, HessianValues[i][j].first, HessianValues[i][j].second);
+				}
+			}
+			fclose(f);
+		}
+
+		size_t rowIdx[128];
 
 
 		void hessian_mult(double* rhs, double* result) {
 
 			//memset(result, 0, N * sizeof(double));
 
-#pragma omp parallel for 
-			for (int i = 0; i < N; i++) {
+#pragma omp parallel 
+			{
+				int tid = omp_get_thread_num();
+				int beginIdx = rowIdx[tid];
+				int endIdx = rowIdx[tid+1];
+				for (int i = beginIdx; i < endIdx; i++) {
 
-				double sum = 0;
-				unsigned int startingVal = HessianValuesCRS_row[i];
-				size_t num_nn = HessianValuesCRS_row[i + 1] - startingVal;
-				const double* H = &HessianValuesCRS_val[startingVal];
-				const unsigned int* cols = &HessianValuesCRS_col[startingVal];
-				//double rhs_i = rhs[i];
-				for (size_t j = 0; j < num_nn; j++, ++H, ++cols) {
-					sum += *H * rhs[*cols];
-					//result[*cols] += *H * rhs_i;  // if only triangular part stored ; need to remove parallel for then, or have local thread storage for result
+					double sum = 0;
+					unsigned int startingVal = HessianValuesCRS_row[i];
+					size_t num_nn = HessianValuesCRS_row[i + 1] - startingVal;
+					const double* H = &HessianValuesCRS_val[startingVal];
+					const unsigned int* cols = &HessianValuesCRS_col[startingVal];
+					//double rhs_i = rhs[i];
+					int nn2 = num_nn / 2;
+
+					for (size_t j = 0; j < nn2; j++) {
+						sum += *H * rhs[*cols]; ++H; ++cols;
+						sum += *H * rhs[*cols]; ++H; ++cols;
+						//result[*cols] += *H * rhs_i;  // if only triangular part stored ; need to remove parallel for then, or have local thread storage for result
+					}
+					if (nn2 * 2 != num_nn) {
+						sum += *H * rhs[*cols];
+					}
+
+					result[i] = sum + diagHessian[i] * rhs[i];
+
 				}
-				result[i] = sum + diagHessian[i] * rhs[i];
-
 			}
 		}
 
@@ -1030,8 +1126,7 @@ namespace transport {
 
 			precompute_hessian();
 			hessian_to_CRS();
-
-			//residual(rhs, result /* = x0 */, &r[0]);
+			
 			hessian_mult(result, &Ap[0]);
 
 			for (int i = 0; i < N; i++) {
@@ -1111,6 +1206,7 @@ namespace transport {
 						for (int j = 0; j < N; j++) {
 							V.weights[j] -= lambda * invGrad[j];
 						}
+
 						goto start; // boo me for that goto as much as you want, I'm a punk
 						break;
 					}
@@ -1122,6 +1218,7 @@ namespace transport {
 					break;
 				}
 
+				//memset(&invGrad[0], 0, invGrad.size() * sizeof(double));
 				conjugate_gradient_solve(&grad[0], &invGrad[0]);
 
 				for (int i = 0; i < N; i++) {

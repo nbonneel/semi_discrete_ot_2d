@@ -49,11 +49,11 @@ void test_optimal_transport_2d() {
 	// 65k points in 13 s
 	// 262k points: 2 min 32 s
 
-	int N = 64 * 64*4;  //number of points
+	int N = 64 * 64*16;  //number of points
 	OptimalTransport2D ot;
 
 
-	omp_set_num_threads(16);
+	omp_set_num_threads(8);
 
 	std::default_random_engine engine;
 	std::uniform_real_distribution<double> uniform(0, 1);
@@ -87,11 +87,12 @@ void test_optimal_transport_2d() {
 void test_power_diagram() {
 
 	// for random points with random weights of the form 1+uniform(0,1) (delaunay + dual): 
-	// 16k points: 0.008 s
-	// 64k points: 0.03 s
-	// 256k points: 0.127 s
+	// 16k points: 0.007 s
+	// 64k points: 0.029 s
+	// 256k points: 0.12 s
 	// 1M points: 0.55 s
-	// 4M points: 2.4 s
+	// 4M points: 2.7 s
+	// 8M points: 6.2 s
 
 	// for unweighted points (slower because more polygons to construct : all vertices have one cell):
 	// 256k points: 1s
@@ -103,10 +104,11 @@ void test_power_diagram() {
 	engine.seed(1385);
 
 	Bowyer2D vd;
-	for (int i = 0; i < 1024*256; i++) { 	
+	for (int i = 0; i < 1024 * 16; i++) {
 		vd.vertices.push_back(Vector(uniform(engine), uniform(engine)));
 		vd.weights.push_back(1+uniform(engine));
 	}
+
 
 
 	const auto start = std::chrono::steady_clock::now();
@@ -119,7 +121,7 @@ void test_power_diagram() {
 	std::cout << "elapsed time: " << elapsed_seconds.count() << "s\n";
 
 
-	vd.save_svg("voronoi_delaunay.svg", true, true, true);
+	vd.save_svg("voronoi_delaunay.svg", true, true, true, false);
 }
 
 void test_OT_lloyd() {
