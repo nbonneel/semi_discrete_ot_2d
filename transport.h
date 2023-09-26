@@ -362,6 +362,7 @@ namespace transport {
 			return middle;
 		}
 
+		// https://doc.cgal.org/latest/Spatial_sorting/index.html
 		void hilbertSort(std::vector<int>& permutation, int begin, int end, bool useXFirst = true, bool invertFirst = false) {
 			if (end - begin <= 1) return;
 
@@ -669,11 +670,11 @@ namespace transport {
 				}
 
 				// the hint for starting the next "locate" is the last inserted triangle
-				lastvP = lastInList;
+				lastvP = firstInsertedTriangle;
 
 				// unless it is infinite ; in this case use the one inserted before (could use a neighbor instead).
 				while (lastvP->infinite_visited_valid & 4) {
-					lastvP = lastvP->prevInMesh;
+					lastvP = lastvP->nextInMesh;
 				}
 			}
 
@@ -784,13 +785,13 @@ namespace transport {
 			fclose(f);
 		}
 
-		mutable Vector tmpMemVector[1][2048];
-		mutable int tmpMemInt[1][2048];
+		mutable Vector tmpMemVector[64][2048];
+		mutable int tmpMemInt[64][2048];
 
 		// clip a cell by a bisector between site si and sj (possibly weighted)
 		void clipCellByBissectorPlane(std::vector<Polygon>& cells, int si, int sj) const {
 
-			int tid = 0;// omp_get_thread_num();
+			int tid =  omp_get_thread_num();
 			size_t Nv = cells[si].vertices.size();
 			if (Nv == 0) return;
 
@@ -812,39 +813,45 @@ namespace transport {
 			const Vector* pv2 = &cells[si].vertices[0];
 			const Vector* pv1 = &cells[si].vertices[Nv - 1];
 
+			Vector* pnewVertices = newVertices;
+			int* pnewNeighbors = newNeighbors;
 
 			for (size_t j = 0; j < Nv; j++, ++pv2) {
 
 				const Vector& v1 = *pv1;
 				const Vector& v2 = *pv2;
 
-				if (dot(v2 - M, diff) > -1E-12) { // v2 inside
-					double d1 = dot(M - v1, diff);
+				double d1 = dot(M - v1, diff);
+
+				if (dot(v2 - M, diff) > -1E-12) { // v2 inside			
 					if (d1 > 1E-12) { // v1 outside
 						const Vector v1v2 = v2 - v1;
 						double t = d1 / dot(v1v2, diff);
-						if (t > 1E-12 && t < 1 - 1E-12) {
-							newVertices[numNewVertices][0] = v1[0] + t * v1v2[0];
-							newVertices[numNewVertices][1] = v1[1] + t * v1v2[1];
-							newNeighbors[numNewVertices] = sj;
-							numNewVertices++;
-						}
+						(*pnewVertices)[0] = v1[0] + t * v1v2[0];
+						(*pnewVertices)[1] = v1[1] + t * v1v2[1];
+						(*pnewNeighbors) = sj;
+						numNewVertices++;
+						++pnewVertices;
+						++pnewNeighbors;
 					}
-					newVertices[numNewVertices] = v2;
-					newNeighbors[numNewVertices] = cells[si].neighbors[j];
+					(*pnewVertices) = v2;
+					(*pnewNeighbors) = cells[si].neighbors[j];
 					numNewVertices++;
+					++pnewVertices;
+					++pnewNeighbors;
 				} else {
-					double d1 = dot(M - v1, diff);
+
 					if (d1 < -1E-12) {
 						const Vector v1v2 = v2 - v1;
 						double d2 = dot(v1v2, diff);
 						double t = d1 / d2;
-						if (t > 1E-12 && t < 1 - 1E-12) {
-							newVertices[numNewVertices][0] = v1[0] + t * v1v2[0];
-							newVertices[numNewVertices][1] = v1[1] + t * v1v2[1];
-							newNeighbors[numNewVertices] = cells[si].neighbors[j];
-							numNewVertices++;
-						}
+						(*pnewVertices)[0] = v1[0] + t * v1v2[0];
+						(*pnewVertices)[1] = v1[1] + t * v1v2[1];
+						(*pnewNeighbors) = cells[si].neighbors[j];
+						numNewVertices++;
+						++pnewVertices;
+						++pnewNeighbors;
+
 					}
 				}
 				pv1 = pv2;
@@ -878,7 +885,8 @@ namespace transport {
 
 			// compute the one-ring
 			neighbors.clear();
-			neighbors.resize(vertices.size());
+			std::vector<int> neighbor_template; neighbor_template.reserve(30);
+			neighbors.resize(vertices.size(), neighbor_template);  // not sure if this works : initialize with a zero-sized vector but with reserved memory
 			for (int i = 0; i < triangles.size(); i++) {
 				neighbors[triangles[i].id[0]].push_back(triangles[i].id[1]);
 				neighbors[triangles[i].id[0]].push_back(triangles[i].id[2]);
@@ -889,7 +897,9 @@ namespace transport {
 				neighbors[triangles[i].id[2]].push_back(triangles[i].id[0]);
 				neighbors[triangles[i].id[2]].push_back(triangles[i].id[1]);
 			}
+
 			// we have inserted everything 3 times, so make it unique (faster than inserting to an std::set or unordered_set)
+#pragma omp parallel for
 			for (int i = 0; i < vertices.size(); i++) {
 				std::sort(neighbors[i].begin(), neighbors[i].end());
 				auto last = std::unique(neighbors[i].begin(), neighbors[i].end());
@@ -898,6 +908,7 @@ namespace transport {
 
 			// for each Voronoi cell (to be computed), start with a square, and clip it by the bisectors returned by the Delaunay 
 			voronoi.resize(vertices.size());
+#pragma omp parallel for
 			for (int i = 0; i < vertices.size(); i++) {
 				if (neighbors[i].size() == 0) {
 					voronoi[i].vertices.clear();
@@ -983,7 +994,7 @@ namespace transport {
 		// finally, more efficient to pre-store the Hessian than computing on the fly
 		void precompute_hessian() {
 
-//#pragma omp parallel for
+#pragma omp parallel for
 			for (int i = 0; i < N; i++) {
 
 				double result = 0;
@@ -1092,19 +1103,33 @@ namespace transport {
 
 					double sum = 0;
 					unsigned int startingVal = HessianValuesCRS_row[i];
-					size_t num_nn = HessianValuesCRS_row[i + 1] - startingVal;
+					int num_nn = HessianValuesCRS_row[i + 1] - startingVal;
 					const double* H = &HessianValuesCRS_val[startingVal];
 					const unsigned int* cols = &HessianValuesCRS_col[startingVal];
 					//double rhs_i = rhs[i];
 					int nn2 = num_nn / 2;
+					int nn4 = num_nn / 4;
 
-					for (size_t j = 0; j < nn2; j++) {
-						sum += *H * rhs[*cols]; ++H; ++cols;
-						sum += *H * rhs[*cols]; ++H; ++cols;
+					for (int j = 0; j < nn4; j++, H += 4, cols += 4) {
+						sum += *H * rhs[*cols]; 
+						sum += *(H+1) * rhs[*(cols+1)]; 
+						sum += *(H+2) * rhs[*(cols+2)]; 
+						sum += *(H + 3) * rhs[*(cols + 3)]; 
 						//result[*cols] += *H * rhs_i;  // if only triangular part stored ; need to remove parallel for then, or have local thread storage for result
 					}
-					if (nn2 * 2 != num_nn) {
-						sum += *H * rhs[*cols];
+					if (nn2 * 2 != num_nn) { // n%4 == 1 or 3
+						if (nn4 * 4 == num_nn-1) { // n%4 == 1
+							sum += *H * rhs[*cols];
+						} else {
+							sum += *H * rhs[*cols]; ++H; ++cols;
+							sum += *H * rhs[*cols]; ++H; ++cols;
+							sum += *H * rhs[*cols]; 
+						}
+					} else {
+						if (nn4 * 4 != num_nn) {  // n%4 == 2
+							sum += *H * rhs[*cols]; ++H; ++cols;
+							sum += *H * rhs[*cols];
+						} // else // n%4 = 0
 					}
 
 					result[i] = sum + diagHessian[i] * rhs[i];
@@ -1141,6 +1166,7 @@ namespace transport {
 				hessian_mult(&p[0], &Ap[0]);
 				double rz = 0, pAp = 0;
 
+#pragma omp parallel for reduction(+ : rz, pAp)
 				for (int i = 0; i < N; i++) {
 					rz += r[i] * z[i];
 					pAp += p[i] * Ap[i];
@@ -1148,7 +1174,8 @@ namespace transport {
 				double alpha = rz / pAp;
 				double rzb = 0;
 				double rr = 0;
-				double* presult = result;
+
+				/*double* presult = result;
 				double* pr = &r[0];
 				double* pp = &p[0];
 				double* pz = &z[0];
@@ -1165,10 +1192,21 @@ namespace transport {
 					pp++;
 					pz++;
 					pointAp++;
+				}*/
+
+#pragma omp parallel for reduction(+ : rzb, rr)
+				for (int i = 0; i < N; i++) {
+					result[i] += alpha * p[i];
+					r[i] -= alpha * Ap[i];
+					z[i] = r[i] / diagHessian[i];
+
+					rzb += r[i] * z[i];
+					rr += sqr(r[i]);
 				}
 				if (rr < 1E-12) break;
 				double beta = rzb / rz;
-				//#pragma omp parallel for schedule(static)
+
+				#pragma omp parallel for 
 				for (int i = 0; i < N; i++) {
 					p[i] = z[i] + beta * p[i];
 				}
