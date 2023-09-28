@@ -51,11 +51,8 @@ void test_optimal_transport_2d() {
 
 	// 1M points : 863 s
 
-	int N = 64 * 64*16;  //number of points
-	OptimalTransport2D ot;
-
-
-	omp_set_num_threads(16); // play with the number of threads on your machine. Many threads will hurt for low sample count
+	int N = 64*64*4*4 ;  //number of points
+	OptimalTransport2D ot(16); // uses 16 threads ; need to fiddle with number of threads
 
 	std::default_random_engine engine;
 	std::uniform_real_distribution<double> uniform(0, 1);

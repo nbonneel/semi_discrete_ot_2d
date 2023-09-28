@@ -908,7 +908,7 @@ namespace transport {
 
 			// for each Voronoi cell (to be computed), start with a square, and clip it by the bisectors returned by the Delaunay 
 			voronoi.resize(vertices.size());
-#pragma omp parallel for
+#pragma omp parallel for 
 			for (int i = 0; i < vertices.size(); i++) {
 				if (neighbors[i].size() == 0) {
 					voronoi[i].vertices.clear();
@@ -987,14 +987,23 @@ namespace transport {
 
 	class OptimalTransport2D {
 	public:
-		OptimalTransport2D() {
+		OptimalTransport2D(int nb_threads = 1) {
+			this->nb_threads = nb_threads;
+#pragma omp parallel
+			{
+				if (omp_get_num_threads() < this->nb_threads) {
+#pragma omp critical
+					this->nb_threads = omp_get_num_threads();
+				}
+			}
+			omp_set_num_threads(nb_threads);
 		};
-
+		
 
 		// finally, more efficient to pre-store the Hessian than computing on the fly
 		void precompute_hessian() {
 
-#pragma omp parallel for
+#pragma omp parallel for num_threads(nb_threads)
 			for (int i = 0; i < N; i++) {
 
 				double result = 0;
@@ -1063,7 +1072,7 @@ namespace transport {
 			int cumNnz = 0;
 			rowIdx[0] = 0;
 			int block = 1;
-			int maxThread = omp_get_max_threads();
+			int maxThread = nb_threads;
 			for (int i = 0; i < N; i++) {
 				cumNnz+= HessianValues[i].size();
 				if (cumNnz>=(block* totalnnz)/ maxThread) { // 100 elements over 3 threads would give 0-32 33-65 66-100  (33+33+34)
@@ -1094,7 +1103,7 @@ namespace transport {
 
 			//memset(result, 0, N * sizeof(double));
 
-#pragma omp parallel 
+#pragma omp parallel num_threads(nb_threads)
 			{
 				int tid = omp_get_thread_num();
 				int beginIdx = rowIdx[tid];
@@ -1166,7 +1175,7 @@ namespace transport {
 				hessian_mult(&p[0], &Ap[0]);
 				double rz = 0, pAp = 0;
 
-#pragma omp parallel for reduction(+ : rz, pAp)
+#pragma omp parallel for reduction(+ : rz, pAp) num_threads(nb_threads)
 				for (int i = 0; i < N; i++) {
 					rz += r[i] * z[i];
 					pAp += p[i] * Ap[i];
@@ -1194,7 +1203,7 @@ namespace transport {
 					pointAp++;
 				}*/
 
-#pragma omp parallel for reduction(+ : rzb, rr)
+#pragma omp parallel for reduction(+ : rzb, rr) num_threads(nb_threads)
 				for (int i = 0; i < N; i++) {
 					result[i] += alpha * p[i];
 					r[i] -= alpha * Ap[i];
@@ -1206,7 +1215,7 @@ namespace transport {
 				if (rr < 1E-12) break;
 				double beta = rzb / rz;
 
-				#pragma omp parallel for 
+				#pragma omp parallel for  num_threads(nb_threads)
 				for (int i = 0; i < N; i++) {
 					p[i] = z[i] + beta * p[i];
 				}
@@ -1279,6 +1288,7 @@ namespace transport {
 			// ugly hack ; while the Delaunay is most efficiently computed when vertices are spatially sorted (hence the Bowyer::sort_vertices method), 
 			// this is *also* the case for the Newton solve, since this reduces the matrix profile and improves cache coherence. So I'm ultimately calling the Bowyer::sort here.
 			N = V.vertices.size();
+			if (N < this->nb_threads) this->nb_threads = N;
 			std::vector<Vector> saved_vertices = V.vertices;			
 			V.sort_vertices();
 			std::vector<int> perm_vector = V.perm;
@@ -1327,6 +1337,7 @@ namespace transport {
 
 		Bowyer2D V;
 		size_t N;
+		int nb_threads;
 	};
 
 };
