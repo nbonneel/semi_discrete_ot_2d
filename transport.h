@@ -2,7 +2,8 @@
 #include <random>
 #include <omp.h>
 #include <iostream>
-
+#include <cstring>
+#include <algorithm>
 #include <chrono>
 
 
@@ -42,7 +43,7 @@ namespace transport {
 		}
 		bool operator<(const Vector& b) const {
 			if (coords[0] < b.coords[0] - 1E-12) return true;
-			if (abs(coords[0] - b.coords[0]) < 1E-12) {
+			if (fabs(coords[0] - b.coords[0]) < 1E-12) {
 				if (coords[1] < b.coords[1] - 1E-12) return true;
 			}
 			return false;
@@ -129,7 +130,7 @@ namespace transport {
 			for (size_t i = 0; i < Nv; i++) {
 				a += vertices[i][0] * vertices[(i + 1) % Nv][1] - vertices[(i + 1) % Nv][0] * vertices[i][1];
 			}
-			return abs(a / 2);
+			return fabs(a / 2.);
 		}
 
 		Vector centroid() const {
@@ -164,7 +165,7 @@ namespace transport {
 				s += (vertices[im][0] * vertices[i][1] - vertices[i][0] * vertices[im][1]) * sm;
 				im = i;
 			}
-			double v1 = abs(s) / 12.;
+			double v1 = fabs(s) / 12.;
 			return v1;
 		}
 
@@ -526,8 +527,7 @@ namespace transport {
 				TriangleP* ti = locateTriangleP(v);
 
 				if (lifted && !isInCircleP(i, ti)) continue; // dangling vertex : this can happen for weighted delaunay only (the corresponding power cell is empty)
-
-
+				
 				// we clear the lists
 				nbpotentiallybad = 0;
 				nbvisited = 0;
@@ -562,8 +562,7 @@ namespace transport {
 							}
 						}
 					}
-				}
-
+				}				
 
 				// we reset the state of visited triangles for the next round.
 				for (int j = 0; j < nbvisited; j++) {
@@ -910,6 +909,7 @@ namespace transport {
 			voronoi.resize(vertices.size());
 #pragma omp parallel for 
 			for (int i = 0; i < vertices.size(); i++) {
+				
 				if (neighbors[i].size() == 0) {
 					voronoi[i].vertices.clear();
 					continue;
@@ -936,7 +936,7 @@ namespace transport {
 
 			for (int i = 0; i < vertices.size(); i++) {
 				double area = voronoi[i].area();
-				double diff = abs(idealArea - area);
+				double diff = fabs(idealArea - area);
 				if (diff > worstAreaDiff) {
 					worstAreaDiff = diff;
 				}
@@ -956,7 +956,7 @@ namespace transport {
 
 			for (int i = 0; i < vertices.size(); i++) {
 				double area = voronoi[i].area();
-				double diff = abs(idealArea - area);
+				double diff = fabs(idealArea - area);
 				sum += diff;
 			}
 			return sum/(vertices.size() * idealArea) * 100.;
@@ -987,23 +987,14 @@ namespace transport {
 
 	class OptimalTransport2D {
 	public:
-		OptimalTransport2D(int nb_threads = 1) {
-			this->nb_threads = nb_threads;
-#pragma omp parallel
-			{
-				if (omp_get_num_threads() < this->nb_threads) {
-#pragma omp critical
-					this->nb_threads = omp_get_num_threads();
-				}
-			}
-			omp_set_num_threads(nb_threads);
+		OptimalTransport2D() {
 		};
 		
 
 		// finally, more efficient to pre-store the Hessian than computing on the fly
 		void precompute_hessian() {
 
-#pragma omp parallel for num_threads(nb_threads)
+#pragma omp parallel for 
 			for (int i = 0; i < N; i++) {
 
 				double result = 0;
@@ -1103,46 +1094,48 @@ namespace transport {
 
 			//memset(result, 0, N * sizeof(double));
 
-#pragma omp parallel num_threads(nb_threads)
+#pragma omp parallel 
 			{
 				int tid = omp_get_thread_num();
-				int beginIdx = rowIdx[tid];
-				int endIdx = rowIdx[tid+1];
-				for (int i = beginIdx; i < endIdx; i++) {
+				if (tid <= nb_threads) {
+					int beginIdx = rowIdx[tid];
+					int endIdx = rowIdx[tid + 1];
+					for (int i = beginIdx; i < endIdx; i++) {
 
-					double sum = 0;
-					unsigned int startingVal = HessianValuesCRS_row[i];
-					int num_nn = HessianValuesCRS_row[i + 1] - startingVal;
-					const double* H = &HessianValuesCRS_val[startingVal];
-					const unsigned int* cols = &HessianValuesCRS_col[startingVal];
-					//double rhs_i = rhs[i];
-					int nn2 = num_nn / 2;
-					int nn4 = num_nn / 4;
+						double sum = 0;
+						unsigned int startingVal = HessianValuesCRS_row[i];
+						int num_nn = HessianValuesCRS_row[i + 1] - startingVal;
+						const double* H = &HessianValuesCRS_val[startingVal];
+						const unsigned int* cols = &HessianValuesCRS_col[startingVal];
+						//double rhs_i = rhs[i];
+						int nn2 = num_nn / 2;
+						int nn4 = num_nn / 4;
 
-					for (int j = 0; j < nn4; j++, H += 4, cols += 4) {
-						sum += *H * rhs[*cols]; 
-						sum += *(H+1) * rhs[*(cols+1)]; 
-						sum += *(H+2) * rhs[*(cols+2)]; 
-						sum += *(H + 3) * rhs[*(cols + 3)]; 
-						//result[*cols] += *H * rhs_i;  // if only triangular part stored ; need to remove parallel for then, or have local thread storage for result
-					}
-					if (nn2 * 2 != num_nn) { // n%4 == 1 or 3
-						if (nn4 * 4 == num_nn-1) { // n%4 == 1
+						for (int j = 0; j < nn4; j++, H += 4, cols += 4) {
 							sum += *H * rhs[*cols];
-						} else {
-							sum += *H * rhs[*cols]; ++H; ++cols;
-							sum += *H * rhs[*cols]; ++H; ++cols;
-							sum += *H * rhs[*cols]; 
+							sum += *(H + 1) * rhs[*(cols + 1)];
+							sum += *(H + 2) * rhs[*(cols + 2)];
+							sum += *(H + 3) * rhs[*(cols + 3)];
+							//result[*cols] += *H * rhs_i;  // if only triangular part stored ; need to remove parallel for then, or have local thread storage for result
 						}
-					} else {
-						if (nn4 * 4 != num_nn) {  // n%4 == 2
-							sum += *H * rhs[*cols]; ++H; ++cols;
-							sum += *H * rhs[*cols];
-						} // else // n%4 = 0
+						if (nn2 * 2 != num_nn) { // n%4 == 1 or 3
+							if (nn4 * 4 == num_nn - 1) { // n%4 == 1
+								sum += *H * rhs[*cols];
+							} else {
+								sum += *H * rhs[*cols]; ++H; ++cols;
+								sum += *H * rhs[*cols]; ++H; ++cols;
+								sum += *H * rhs[*cols];
+							}
+						} else {
+							if (nn4 * 4 != num_nn) {  // n%4 == 2
+								sum += *H * rhs[*cols]; ++H; ++cols;
+								sum += *H * rhs[*cols];
+							} // else // n%4 = 0
+						}
+
+						result[i] = sum + diagHessian[i] * rhs[i];
+
 					}
-
-					result[i] = sum + diagHessian[i] * rhs[i];
-
 				}
 			}
 		}
@@ -1175,7 +1168,7 @@ namespace transport {
 				hessian_mult(&p[0], &Ap[0]);
 				double rz = 0, pAp = 0;
 
-#pragma omp parallel for reduction(+ : rz, pAp) num_threads(nb_threads)
+#pragma omp parallel for reduction(+ : rz, pAp) 
 				for (int i = 0; i < N; i++) {
 					rz += r[i] * z[i];
 					pAp += p[i] * Ap[i];
@@ -1203,7 +1196,7 @@ namespace transport {
 					pointAp++;
 				}*/
 
-#pragma omp parallel for reduction(+ : rzb, rr) num_threads(nb_threads)
+#pragma omp parallel for reduction(+ : rzb, rr)
 				for (int i = 0; i < N; i++) {
 					result[i] += alpha * p[i];
 					r[i] -= alpha * Ap[i];
@@ -1215,7 +1208,7 @@ namespace transport {
 				if (rr < 1E-12) break;
 				double beta = rzb / rz;
 
-				#pragma omp parallel for  num_threads(nb_threads)
+				#pragma omp parallel for 
 				for (int i = 0; i < N; i++) {
 					p[i] = z[i] + beta * p[i];
 				}
@@ -1229,7 +1222,7 @@ namespace transport {
 			N = V.vertices.size();
 			V.weights.resize(N);
 			std::fill(V.weights.begin(), V.weights.end(), 0.0);
-
+			
 			double lambda = 1;
 			double worstarea = 0;
 			std::vector<double> grad(N), invGrad(N, 0.);
@@ -1239,10 +1232,12 @@ namespace transport {
 				//V.build();
 				V.compute_delaunay(iter == 0);
 				V.compute_dual();
-
+				
 				worstarea = 0;
 				for (int i = 0; i < N; i++) {
+					
 					double a = V.voronoi[i].area();
+
 					if (a <= 0) { // if an empty cell is detected, we roll back half the step size and reduce the step size by half. See Gallouet&Merigot
 						//std::cout << "new lambda:"<<lambda*0.5 << std::endl;
 						lambda *= 0.5;
@@ -1258,13 +1253,13 @@ namespace transport {
 						break;
 					}
 					grad[i] = 1.0 / N - a;
-					if (abs(grad[i]) > worstarea) worstarea = abs(grad[i]);
+					if (fabs(grad[i]) > worstarea) worstarea = fabs(grad[i]);
 				}
 				if (worstarea * N * 100 < worst_area_relative_threshold_percent) {
 					//std::cout << "optimization successfully stopped after " << iter << " Newton iterations" << std::endl;
 					break;
 				}
-
+				
 				//memset(&invGrad[0], 0, invGrad.size() * sizeof(double));
 				conjugate_gradient_solve(&grad[0], &invGrad[0]);
 
@@ -1288,7 +1283,13 @@ namespace transport {
 			// ugly hack ; while the Delaunay is most efficiently computed when vertices are spatially sorted (hence the Bowyer::sort_vertices method), 
 			// this is *also* the case for the Newton solve, since this reduces the matrix profile and improves cache coherence. So I'm ultimately calling the Bowyer::sort here.
 			N = V.vertices.size();
-			if (N < this->nb_threads) this->nb_threads = N;
+#pragma omp parallel
+			{
+#pragma omp critical
+				nb_threads = omp_get_num_threads();
+			}
+			if (N < nb_threads) nb_threads = N;
+
 			std::vector<Vector> saved_vertices = V.vertices;			
 			V.sort_vertices();
 			std::vector<int> perm_vector = V.perm;
