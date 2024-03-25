@@ -25,6 +25,11 @@ namespace transport {
 			coords[1] += V[1];
 			return *this;
 		}
+		Vector& operator*=(double s) {
+			coords[0] *= s;
+			coords[1] *= s;
+			return *this;
+		}
 		Vector& operator/=(double s) {
 			coords[0] /= s;
 			coords[1] /= s;
@@ -111,6 +116,11 @@ namespace transport {
 	};
 
 
+	// "normal" orient 2d with 2x2 determinant. If within precision limits, just return 0
+	inline int orient_2d_filter(const Vector& p0, const Vector& p1, const Vector p2);
+
+	double integrateSquaredDistanceOver2DPixel(int pixX, int pixY, double imgW, const Vector& Pi);
+
 
 	/// A Polygon. Great comment here.
 
@@ -132,6 +142,88 @@ namespace transport {
 			}
 			return fabs(a / 2.);
 		}
+
+
+		// quick test for whether a pixel (pixX, pixY) of an image of size imgW is fully inside (+1), outside (-1) or inbetween OR undetermined side (0) of the current convex polygon (assumes the image is square and represents the domain [0, 1]^2)
+		int test_pixel_side(int pixX, int pixY, int imgW) {
+			
+			int nbPlus = 0; 
+			int nbMinus = 0;
+			double invW = 1 / (double)imgW;
+			Vector P0(pixX * invW, pixY * invW);
+			for (int i = 0; i < vertices.size(); i++) {
+
+				char s1 = orient_2d_filter(vertices[i], vertices[(i + 1) % vertices.size()], P0);
+				char s2 = orient_2d_filter(vertices[i], vertices[(i + 1) % vertices.size()], P0 + Vector(invW, 0.));
+				char s3 = orient_2d_filter(vertices[i], vertices[(i + 1) % vertices.size()], P0 + Vector(invW, invW));
+				char s4 = orient_2d_filter(vertices[i], vertices[(i + 1) % vertices.size()], P0 + Vector(0., invW));
+
+				if (s1 * s2 * s3 * s4 == 0) return 0; // at least one is undetermined, we won't go further
+				if (s1 + s2 + s3 + s4 == 4) nbPlus++;
+				if (nbPlus > 1) return 0;
+
+				if (s1 + s2 + s3 + s4 == -4) nbMinus++;				
+			}
+			if (nbPlus == 1) return -1; // it is definitely outside
+			if (nbMinus == vertices.size()) return 1; // it is definitely inside
+			return 0; // unknown or inbetween
+
+		}
+
+		double weighted_area(double* density, int densityW, Vector& barycenter, bool integrate_square_dist = false, const Vector& Pi = Vector(0,0)) {
+			 
+			if (vertices.size() <= 2) return 0.;
+
+			double val = 0;
+			double bminx = 1E9, bminy = 1E9, bmaxx = -1E9, bmaxy = -1E9;
+			for (int j = 0; j < vertices.size(); j++) {
+				bminx = std::min(bminx, vertices[j][0]);
+				bminy = std::min(bminy, vertices[j][1]);
+				bmaxx = std::max(bmaxx, vertices[j][0]);
+				bmaxy = std::max(bmaxy, vertices[j][1]);
+			}
+			bminx = std::min(densityW - 1., std::max(0., std::floor(densityW * bminx)));
+			bminy = std::min(densityW - 1., std::max(0., std::floor(densityW * bminy)));
+			bmaxx = std::min(densityW - 1., std::max(0., std::floor(densityW * bmaxx)));
+			bmaxy = std::min(densityW - 1., std::max(0., std::floor(densityW * bmaxy)));
+
+			barycenter = Vector(0, 0);
+			Polygon vor, tmp;
+			vor.vertices.reserve(6);
+			tmp.vertices.reserve(6);
+			for (int y = bminy; y <= bmaxy; y++) {
+				for (int x = bminx; x <= bmaxx; x++) {
+
+					/*int s = this->test_pixel_side(x, y, densityW); // right now, this filter doesn't speed up anything
+					if (s == -1) continue;
+					if (s == 1) {
+						if (integrate_square_dist) {
+							val += integrateSquaredDistanceOver2DPixel(x, y, densityW, Pi) * density[y * densityW + x];
+						} else {
+						    double a = density[y * densityW + x] / (double)(densityW * densityW);
+							val += a;
+							barycenter += a * Vector(x+0.5, y+0.5)/densityW;
+						}
+						continue;
+					}*/
+
+					this->intersect_with_pixel(x, y, densityW, vor, tmp);					
+					if (integrate_square_dist) {
+						val += vor.integrateSquaredDistance2D(Pi)* density[y * densityW + x];
+					} else {
+						double a = vor.area() * density[y * densityW + x];
+						val += a ;
+						barycenter += a * vor.centroid();
+					}
+
+				}
+			}
+
+			barycenter = barycenter / val;
+
+			return val ;
+
+		} 
 
 		Vector centroid() const {
 			double A = 0;
@@ -169,6 +261,48 @@ namespace transport {
 			return v1;
 		}
 
+
+		void clip_polygon_by_edge(const Vector& u, const Vector& v, Polygon& result) const { 
+
+			//result.vertices.reserve(vertices.size() + 1);
+			result.vertices.clear();
+			Vector N(v[1] - u[1], -v[0] + u[0]);
+
+			for (int i = 0; i < vertices.size(); i++) {
+
+				const Vector& A = (i == 0) ? vertices[vertices.size() - 1] : vertices[i - 1];
+				const Vector& B = vertices[i];
+				double t = dot(u - A, N) / dot(B - A, N);
+				Vector P = A + t * (B - A);
+
+				if (dot(B - u, N) < 0) { // B is inside
+
+					if (dot(A - u, N) >= 0) { // A is outside
+						result.vertices.push_back(P);
+					}
+					result.vertices.push_back(B);
+				} else {
+					if (dot(A - u, N) < 0) { // A is inside
+						result.vertices.push_back(P);
+					}
+				}
+			}
+		}
+
+		void intersect_with_pixel(int px, int py, int width, Polygon& result, Polygon &tmp) const {
+
+
+			Vector p0(px / (double)width, py / (double)width);
+			Vector p3(px / (double)width, (py+1) / (double)width);
+			Vector p2((px + 1) / (double)width, (py + 1) / (double)width);
+			Vector p1((px + 1) / (double)width, py / (double)width);
+
+			this->clip_polygon_by_edge(p0, p1, tmp);
+			tmp.clip_polygon_by_edge(p1, p2, result);
+			result.clip_polygon_by_edge(p2, p3, tmp);
+			tmp.clip_polygon_by_edge(p3, p0, result);
+		}
+
 	};
 
 
@@ -191,9 +325,6 @@ namespace transport {
 	// Use expansion arithmetic to produce robust orientation predicates (not used for inCircle as it seems already much more robust)
 	// basic idea: if some operation is within precision limits, convert it to an approximate value and a remainder such that the sum of both is still the exact value.
 
-
-	// "normal" orient 2d with 2x2 determinant. If within precision limits, just return 0
-	inline int orient_2d_filter(const Vector& p0, const Vector& p1, const Vector p2);
 
 	// arithmetic presented in Shewchuk's paper
 	void fast_two_sum(double a, double b, double& x, double& y);
@@ -987,44 +1118,132 @@ namespace transport {
 
 	class OptimalTransport2D {
 	public:
-		OptimalTransport2D() {
+		OptimalTransport2D(): has_density(false) {			
 		};
+
+		// densityW is the width (== height) of the image used as a density, stored in the density variable in row major
+		OptimalTransport2D(const std::vector<double>& density, int densityW):density(density), densityW(densityW), has_density(true) {
+		};
+
+
+		double pointToIndex(double point, double size) {
+			return std::floor(point * size);
+		}
 		
+		double integrateDensityOverEdge(Vector p0, Vector p1) {
+
+			if ((p0 - p1).getNorm2() == 0) return 0;
+
+			p0[0] = std::max(1E-10, std::min(p0[0], 1. - 1E-10));
+			p0[1] = std::max(1E-10, std::min(p0[1], 1. - 1E-10));
+			p1[0] = std::max(1E-10, std::min(p1[0], 1. - 1E-10));
+			p1[1] = std::max(1E-10, std::min(p1[1], 1. - 1E-10));
+
+			Vector scaledP0 = Vector(p0[0] * densityW, p0[1] * densityW);
+			Vector scaledP1 = Vector(p1[0] * densityW, p1[1] * densityW);
+
+			double dx = scaledP1[0] - scaledP0[0];
+			double dy = scaledP1[1] - scaledP0[1];
+			double segNorm = std::sqrt(dx * dx + dy * dy);
+			double stepX = dx > 0 ? 1 : -1;
+			double stepY = dy > 0 ? 1 : -1;
+
+			// tDeltaX, tDeltaY for crossing one pixel
+			double tDeltaX = fabs(1.0 / dx);
+			double tDeltaY = fabs(1.0 / dy);
+
+			// Initial tMaxX, tMaxY for the first pixel's boundaries
+			double tMaxX = (stepX > 0 ? ceil(scaledP0[0]) - scaledP0[0] : scaledP0[0] - floor(scaledP0[0])) * tDeltaX;
+			double tMaxY = (stepY > 0 ? ceil(scaledP0[1]) - scaledP0[1] : scaledP0[1] - floor(scaledP0[1])) * tDeltaY;
+			
+
+
+			double sum = 0.0;
+			int pixelX = floor(scaledP0[0]);
+			int pixelY = floor(scaledP0[1]);
+			double prevt = 0;
+			double sumseg = 0;
+			//double segltot = (scaledP1 - scaledP0).getNorm();
+			while (true) {
+				// Accumulate weighted pixel value
+				if (pixelX >= 0 && pixelX < densityW && pixelY >= 0 && pixelY < densityW) {
+					double segmentLength = segNorm * (std::min(tMaxX, tMaxY) - prevt);
+					sumseg += segmentLength;
+					sum += density[pixelY * densityW + pixelX] * segmentLength;
+				}
+				prevt = std::min(tMaxX, tMaxY);
+
+				if (tMaxX < tMaxY) {
+					tMaxX += tDeltaX;
+					pixelX += stepX;
+				} else {
+					tMaxY += tDeltaY;
+					pixelY += stepY;
+				}
+
+				// Check if we've reached the end of the line segment
+				/*if ((dx > 0 && pixelX >= scaledP1[0]) || (dx < 0 && pixelX <= scaledP1[0]) ||
+					(dy > 0 && pixelY >= scaledP1[1]) || (dy < 0 && pixelY <= scaledP1[1])) {
+					break;
+				}*/
+				if ((dx > 0 && pixelX >= std::floor(scaledP1[0])) || (dx < 0 && pixelX <= std::ceil(scaledP1[0])) ||
+					(dy > 0 && pixelY >= std::floor(scaledP1[1])) || (dy < 0 && pixelY <= std::ceil(scaledP1[1]))) {
+					break;
+				}
+			}
+
+			if (pixelX >= 0 && pixelX < densityW && pixelY >= 0 && pixelY < densityW) {
+				double segmentLength = segNorm * (1.0 - prevt);
+				sumseg += segmentLength;
+				sum += density[pixelY * densityW + pixelX] * segmentLength;
+			}
+
+			return sum / densityW; // Correct the scale of the sum since we did not work on the [0,1]^2 square
+		}
+
 
 		// finally, more efficient to pre-store the Hessian than computing on the fly
 		void precompute_hessian() {
 
+
 #pragma omp parallel for 
-			for (int i = 0; i < N; i++) {
+				for (int i = 0; i < N; i++) {
 
-				double result = 0;
-				double sum_contribs = 0;
-				size_t num_nn = V.voronoi[i].neighbors.size();
-				const int* nn = &V.voronoi[i].neighbors[0];
-				const Vector* vtx = &V.voronoi[i].vertices[0];
-				const Vector* prev_vtx = &V.voronoi[i].vertices[num_nn - 1];
-				Vector curSample = V.vertices[i];
+					double result = 0;
+					double sum_contribs = 0;
+					size_t num_nn = V.voronoi[i].neighbors.size();
+					const int* nn = &V.voronoi[i].neighbors[0];
+					const Vector* vtx = &V.voronoi[i].vertices[0];
+					const Vector* prev_vtx = &V.voronoi[i].vertices[num_nn - 1];
+					Vector curSample = V.vertices[i];
 
-				HessianValues[i].clear();
-				HessianValues[i].reserve(V.voronoi[i].vertices.size());
+					HessianValues[i].clear();
+					HessianValues[i].reserve(V.voronoi[i].vertices.size());
 
-				double sumcontrib = 0;
-				for (int j = 0; j < num_nn; j++, ++nn, ++vtx) {
-					double edgeLength = (*vtx - *prev_vtx).getNorm();
-					prev_vtx = vtx;
-					if (*nn < 0) continue;
+					double sumcontrib = 0;
+					for (int j = 0; j < num_nn; j++, ++nn, ++vtx) {
+						double edgeLength;
+						//double etest;
+						if (has_density) {
+							edgeLength = integrateDensityOverEdge(*vtx, *prev_vtx);
+							//etest = (*vtx - *prev_vtx).getNorm();
+						} else {
+							edgeLength = (*vtx - *prev_vtx).getNorm();
+						}
+						prev_vtx = vtx;
+						if (*nn < 0) continue;
 
 
-					double contrib = -edgeLength / (2. * (curSample - V.vertices[*nn]).getNorm());
-					sumcontrib += contrib;
+						double contrib = -edgeLength / (2. * (curSample - V.vertices[*nn]).getNorm());
+						sumcontrib += contrib;
 
-					//if (i < *nn) continue; // ONLY store lower triangular part !  => for some reason, this increases the final error, and complexifies parallelism
-					HessianValues[i].push_back(std::pair<int, double>(*nn, contrib));
-				}
-				diagHessian[i] = -sumcontrib;
+						//if (i < *nn) continue; // ONLY store lower triangular part !  => for some reason, this increases the final error, and complexifies parallelism
+						HessianValues[i].push_back(std::pair<int, double>(*nn, contrib));
+					}
+					diagHessian[i] = -sumcontrib;
 
+				
 			}
-
 		}
 
 		std::vector<std::vector<std::pair<int, double> > > HessianValues;
@@ -1205,7 +1424,9 @@ namespace transport {
 					rzb += r[i] * z[i];
 					rr += sqr(r[i]);
 				}
-				if (rr < 1E-12) break;
+				if (!has_density && rr < 1E-12) break; // FOR UNIFORM DENSITIES !
+				if (has_density && rr < 1E-3) break; // FOR NON UNIFORM DENSITIES !
+
 				double beta = rzb / rz;
 
 				#pragma omp parallel for 
@@ -1225,7 +1446,7 @@ namespace transport {
 			
 			double lambda = 1;
 			double worstarea = 0;
-			std::vector<double> grad(N), invGrad(N, 0.);
+			std::vector<double> grad(N), invGrad(N, 0.), allAreas(N, 0.);
 			for (int iter = 0; iter < max_Newton_iter; iter++) {
 			start:
 				//V.clear();
@@ -1234,9 +1455,25 @@ namespace transport {
 				V.compute_dual();
 				
 				worstarea = 0;
+#pragma omp parallel for
+				for (int i = 0; i < N; i++) {
+					double a;
+					Vector barycenter;
+					//double atest;
+					if (has_density) {
+						a = V.voronoi[i].weighted_area(&density[0], densityW, barycenter);
+						//atest = V.voronoi[i].area();
+
+					} else {
+						a = V.voronoi[i].area();
+					}
+					allAreas[i] = a;
+				}
+
 				for (int i = 0; i < N; i++) {
 					
-					double a = V.voronoi[i].area();
+					double a = allAreas[i];
+
 
 					if (a <= 0) { // if an empty cell is detected, we roll back half the step size and reduce the step size by half. See Gallouet&Merigot
 						//std::cout << "new lambda:"<<lambda*0.5 << std::endl;
@@ -1255,6 +1492,7 @@ namespace transport {
 					grad[i] = 1.0 / N - a;
 					if (fabs(grad[i]) > worstarea) worstarea = fabs(grad[i]);
 				}
+				//std::cout << worstarea * N * 100 << std::endl;
 				if (worstarea * N * 100 < worst_area_relative_threshold_percent) {
 					//std::cout << "optimization successfully stopped after " << iter << " Newton iterations" << std::endl;
 					break;
@@ -1314,10 +1552,19 @@ namespace transport {
 			V.compute_delaunay(false);
 			V.compute_dual();
 			double sI = 0;
-			for (size_t i = 0; i < N; i++) {
-				sI += V.voronoi[i].integrateSquaredDistance2D(V.vertices[i]);
+			double sItest = 0;
+			if (has_density) {
+				Vector barycenter;
+#pragma omp parallel for reduction(+ : sI)
+				for (int i = 0; i < N; i++) {
+					sI += V.voronoi[i].weighted_area(&density[0], densityW, barycenter, true, V.vertices[i]);
+					//sItest += V.voronoi[i].integrateSquaredDistance2D(V.vertices[i]);
+				}				
+			} else {
+				for (size_t i = 0; i < N; i++) {
+					sI += V.voronoi[i].integrateSquaredDistance2D(V.vertices[i]);
+				}
 			}
-
 			
 			return sI;
 		}
@@ -1325,10 +1572,19 @@ namespace transport {
 		void ot_lloyd(int n_lloyd_iter = 100) {
 
 			for (int iter = 0; iter < n_lloyd_iter; iter++) {
-				optimize();
+				std::cout << "performing Lloyd iteration " << iter <<" over "<< n_lloyd_iter << std::endl;
+				optimize(100);
 
-				for (int i = 0; i < V.vertices.size(); i++) {
-					V.vertices[i] = V.voronoi[i].centroid();
+				if (has_density) {
+					for (int i = 0; i < V.vertices.size(); i++) {
+						Vector barycenter;
+						double a = V.voronoi[i].weighted_area(&density[0], densityW, barycenter);
+						V.vertices[i] = barycenter;
+					}
+				} else {
+					for (int i = 0; i < V.vertices.size(); i++) {
+						V.vertices[i] = V.voronoi[i].centroid();
+					}
 				}
 
 			}
@@ -1339,6 +1595,9 @@ namespace transport {
 		Bowyer2D V;
 		size_t N;
 		int nb_threads;
+		bool has_density;
+		std::vector<double> density;
+		int densityW;
 	};
 
 };

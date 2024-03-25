@@ -149,16 +149,65 @@ void test_OT_lloyd() {
 }
 
 
+void test_lloyd_with_density() {
 
+
+	//std::ifstream file("lionOrigami_highcontrast_blur2.bmp", std::ios::binary);
+	std::ifstream file("lionOrigami256.bmp", std::ios::binary);
+	std::vector<char> header(54);
+	file.read(header.data(), 54); // Read BMP header
+
+	int width, height;
+	file.seekg(18, std::ios::beg);
+	file.read(reinterpret_cast<char*>(&width), 4);
+	file.read(reinterpret_cast<char*>(&height), 4); // Read dimensions
+
+	std::vector<unsigned char> img((size_t)width * height * 3);
+	file.seekg(54, std::ios::beg); // Go to the start of the pixel data
+	file.read(reinterpret_cast<char*>(img.data()), img.size()); // Read pixels
+
+	std::vector<double> density(width * height);
+	double sum = 0;
+	for (int i = 0; i < density.size(); i++) {
+		density[i] = 256 - img[i * 3];
+		sum += density[i];
+	}
+	for (int i = 0; i < density.size(); i++) {
+		density[i] *= width* width/sum;
+	}
+
+	std::default_random_engine engine;
+	std::uniform_real_distribution<double> uniform(0, 1);
+
+	engine.seed(1385);
+
+	OptimalTransport2D ot(density, width);
+	//OptimalTransport2D ot;
+
+	for (int i = 0; i < 4096*4; i++) {
+		ot.V.vertices.push_back(Vector(uniform(engine), uniform(engine)));
+	}
+
+	const auto start = std::chrono::steady_clock::now();
+	ot.ot_lloyd();
+	const auto end = std::chrono::steady_clock::now();
+	const std::chrono::duration<double> elapsed_seconds = end - start;
+
+	std::cout << "elapsed time: " << elapsed_seconds.count() << "s\n";
+
+
+	ot.V.save_svg("lloyd_density.svg", false, true, true);
+}
 
 int main(int argc, char* argv[]) {
 
 
-	test_optimal_transport_2d();
+	//test_optimal_transport_2d();
 
 	//test_power_diagram();
     //test_OT_lloyd();
 
+	test_lloyd_with_density();
 
 	return 0;
 }

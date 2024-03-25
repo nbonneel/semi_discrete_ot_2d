@@ -59,6 +59,11 @@ namespace transport {
 
 	}
 
+	double integrateSquaredDistanceOver2DPixel(int pixX, int pixY, double imgW, const Vector& Pi) { //https://people.sc.fsu.edu/~jburkardt/cpp_src/polygon_integrals/polygon_integrals.html
+
+		double v1 = (3 * sqr(imgW) * Pi.getNorm2() - imgW * (6 * (Pi[0] * pixX + Pi[1] * pixY) + 3 * (Pi[0] + Pi[1])) + 3 * (sqr(pixX) + sqr(pixY) + pixX + pixY) + 2.) / (3. * sqr(sqr(imgW)));
+		return std::abs(v1);
+	}
 
 	// https://www.cs.cmu.edu/~quake/robust.html but with weights and without the "with a little more effort" transform. height is the parabolic lifting with weight: x^2+y^2+w^2
 	bool isInCircleLifted(const Vector& P, const Vector& A, const Vector& B, const Vector& C, double hP, double hA, double hB, double hC) {
