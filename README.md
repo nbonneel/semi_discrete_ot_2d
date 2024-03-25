@@ -18,4 +18,6 @@ Lloyd for non-uniform density is still very slow (here 9min for 16k samples) due
 
 ![screenshot](lionOrigami256.bmp) ![screenshot](stippling.png)
 
+Without the Voronoi edges:
 
+![screenshot](stipplingB.png)
