@@ -145,50 +145,63 @@ namespace transport {
 
 
 		// quick test for whether a pixel (pixX, pixY) of an image of size imgW is fully inside (+1), outside (-1) or inbetween OR undetermined side (0) of the current convex polygon (assumes the image is square and represents the domain [0, 1]^2)
-		int test_pixel_side(int pixX, int pixY, int imgW) {
-			
-			/*int nbPlus = 0; 
-			int nbMinus = 0;
+		int test_pixel_side(int pixX, int pixY, int imgW, const Vector& polygonCentroid, double inCircleRad, double outCircleRad) {
+
 			double invW = 1 / (double)imgW;
-			Vector P0(pixX * invW, pixY * invW);
+			Vector centerP((pixX + 0.5) * invW, (pixY + 0.5) * invW);
+			double db = (centerP - polygonCentroid).getNorm();
+			if (db + 0.708 * invW < inCircleRad) return 1;
+			if (db - 0.707 * invW > outCircleRad) return -1;
+			//return 0;
+
+			int nbPlus = 0; 
+			int nbMinus = 0;
+			const Vector P0(pixX * invW, pixY * invW);
+			const Vector P2(P0[0] + invW, P0[1] + invW);
+
+			const Vector P1(P2[0], P0[1]);
+			const Vector P3(P0[0], P2[1]);
+
 			for (int i = 0; i < vertices.size(); i++) {
 
-				char s1 = orient_2d_filter(vertices[i], vertices[(i + 1) % vertices.size()], P0);
-				char s2 = orient_2d_filter(vertices[i], vertices[(i + 1) % vertices.size()], P0 + Vector(invW, 0.));
-				char s3 = orient_2d_filter(vertices[i], vertices[(i + 1) % vertices.size()], P0 + Vector(invW, invW));
-				char s4 = orient_2d_filter(vertices[i], vertices[(i + 1) % vertices.size()], P0 + Vector(0., invW));
+				const Vector& vnext = vertices[(i + 1) % vertices.size()];
+				char s1 = orient_2d_filter(vertices[i], vnext, P0);
+				char s2 = orient_2d_filter(vertices[i], vnext, P1);
+				char s3 = orient_2d_filter(vertices[i], vnext, P2);
+				char s4 = orient_2d_filter(vertices[i], vnext, P3);
 
-				if (s1 * s2 * s3 * s4 == 0) return 0; // at least one is undetermined, we won't go further
-				if (s1 + s2 + s3 + s4 == 4) nbPlus++;
+				if ((s1 | s2 | s3 | s4) == 0) return 0; // at least one is undetermined, we won't go further
+				char s = s1 + s2 + s3 + s4;
+				if (s == 4) nbPlus++;
 				if (nbPlus > 1) return 0;
 
-				if (s1 + s2 + s3 + s4 == -4) nbMinus++;				
+				if (s == -4) nbMinus++;				
 			}
 			if (nbPlus == 1) return -1; // it is definitely outside
 			if (nbMinus == vertices.size()) return 1; // it is definitely inside
-			return 0; // unknown or inbetween*/
+			return 0; // unknown or inbetween
+		
 
-			return 0;
-			double invW = 1 / (double)imgW;
-			Vector centerP((pixX+0.5) * invW, (pixY+0.5) * invW);
-			Vector b = this->centroid();
+		}
+
+		// NOT the inscribed/circumscribed circles : just a circle of center "centroid" that is fully inside or fully contains the polygon
+		// the polygon is convex => it contains its centroid
+		void getInOutCircleRadii(const Vector& centroid, double& inCircleRad, double& outCircleRad) {
+
 			double minD = 1E9, maxD = -1E9;
 			int im = vertices.size() - 1;
 			for (int i = 0; i < vertices.size(); i++) {
-				Vector edge(vertices[i]-vertices[im]);
+				Vector edge(vertices[i] - vertices[im]);
 				Vector normalEdge(-edge[1], edge[0]);
-				double dVert = (vertices[i] - b).getNorm2();
-				double dEdge = dot(normalEdge, vertices[i] - b) / normalEdge.getNorm();
+				double dVert = (vertices[i] - centroid).getNorm2();
+				double dEdge = dot(normalEdge, vertices[i] - centroid) / normalEdge.getNorm();
 				minD = std::min(minD, dEdge);
 				maxD = std::max(maxD, dVert);
 				im = i;
 			}
-			double db = (centerP-b).getNorm();
-			if (db + 0.708 < minD) return 1;
-			if (db - 0.707 > maxD) return -1;
-			return 0;
 
-
+			inCircleRad = minD;
+			outCircleRad = sqrt(maxD);
 		}
 
 		double weighted_area(double* density, int densityW, Vector& barycenter, bool integrate_square_dist = false, const Vector& Pi = Vector(0,0)) {
@@ -208,6 +221,11 @@ namespace transport {
 			bmaxx = std::min(densityW - 1., std::max(0., std::floor(densityW * bmaxx)));
 			bmaxy = std::min(densityW - 1., std::max(0., std::floor(densityW * bmaxy)));
 
+			
+			Vector centroid_uniform = this->centroid(); 
+			double inCircleRad, outCircleRad;
+			this->getInOutCircleRadii(centroid_uniform, inCircleRad, outCircleRad);
+			//int nb0=0, nb1 = 0;
 			barycenter = Vector(0, 0);
 			Polygon vor, tmp;
 			vor.vertices.reserve(6);
@@ -215,7 +233,10 @@ namespace transport {
 			for (int y = bminy; y <= bmaxy; y++) {
 				for (int x = bminx; x <= bmaxx; x++) {
 
-					/*int s = this->test_pixel_side(x, y, densityW); // right now, this filter doesn't speed up anything
+										
+					int s = this->test_pixel_side(x, y, densityW, centroid_uniform, inCircleRad, outCircleRad); // right now, this filter doesn't speed up anything
+					//nb1 += abs(s);
+					//nb0 += 1 - abs(s);
 					if (s == -1) continue;
 					if (s == 1) {
 						if (integrate_square_dist) {
@@ -226,7 +247,7 @@ namespace transport {
 							barycenter += a * Vector(x+0.5, y+0.5)/densityW;
 						}
 						continue;
-					}*/
+					}
 
 					this->intersect_with_pixel(x, y, densityW, vor, tmp);					
 					if (integrate_square_dist) {
@@ -239,7 +260,7 @@ namespace transport {
 
 				}
 			}
-
+			//std::cout << nb0 << " " << nb1 << std::endl;
 			barycenter = barycenter / val;
 
 			return val ;
@@ -284,26 +305,28 @@ namespace transport {
 
 
 		void clip_polygon_by_edge(const Vector& u, const Vector& v, Polygon& result) const { 
-
-			//result.vertices.reserve(vertices.size() + 1);
+			
 			result.vertices.clear();
+			result.vertices.reserve(vertices.size() + 1);
 			Vector N(v[1] - u[1], -v[0] + u[0]);
 
 			for (int i = 0; i < vertices.size(); i++) {
 
 				const Vector& A = (i == 0) ? vertices[vertices.size() - 1] : vertices[i - 1];
 				const Vector& B = vertices[i];
-				double t = dot(u - A, N) / dot(B - A, N);
-				Vector P = A + t * (B - A);
 
 				if (dot(B - u, N) < 0) { // B is inside
 
 					if (dot(A - u, N) >= 0) { // A is outside
+						double t = dot(u - A, N) / dot(B - A, N);
+						Vector P = A + t * (B - A);
 						result.vertices.push_back(P);
 					}
 					result.vertices.push_back(B);
 				} else {
 					if (dot(A - u, N) < 0) { // A is inside
+						double t = dot(u - A, N) / dot(B - A, N);
+						Vector P = A + t * (B - A);
 						result.vertices.push_back(P);
 					}
 				}
