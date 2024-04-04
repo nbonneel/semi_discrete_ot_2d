@@ -147,7 +147,7 @@ namespace transport {
 		// quick test for whether a pixel (pixX, pixY) of an image of size imgW is fully inside (+1), outside (-1) or inbetween OR undetermined side (0) of the current convex polygon (assumes the image is square and represents the domain [0, 1]^2)
 		int test_pixel_side(int pixX, int pixY, int imgW) {
 			
-			int nbPlus = 0; 
+			/*int nbPlus = 0; 
 			int nbMinus = 0;
 			double invW = 1 / (double)imgW;
 			Vector P0(pixX * invW, pixY * invW);
@@ -166,7 +166,28 @@ namespace transport {
 			}
 			if (nbPlus == 1) return -1; // it is definitely outside
 			if (nbMinus == vertices.size()) return 1; // it is definitely inside
-			return 0; // unknown or inbetween
+			return 0; // unknown or inbetween*/
+
+			return 0;
+			double invW = 1 / (double)imgW;
+			Vector centerP((pixX+0.5) * invW, (pixY+0.5) * invW);
+			Vector b = this->centroid();
+			double minD = 1E9, maxD = -1E9;
+			int im = vertices.size() - 1;
+			for (int i = 0; i < vertices.size(); i++) {
+				Vector edge(vertices[i]-vertices[im]);
+				Vector normalEdge(-edge[1], edge[0]);
+				double dVert = (vertices[i] - b).getNorm2();
+				double dEdge = dot(normalEdge, vertices[i] - b) / normalEdge.getNorm();
+				minD = std::min(minD, dEdge);
+				maxD = std::max(maxD, dVert);
+				im = i;
+			}
+			double db = (centerP-b).getNorm();
+			if (db + 0.708 < minD) return 1;
+			if (db - 0.707 > maxD) return -1;
+			return 0;
+
 
 		}
 
@@ -297,8 +318,8 @@ namespace transport {
 			Vector p2((px + 1) / (double)width, (py + 1) / (double)width);
 			Vector p1((px + 1) / (double)width, py / (double)width);
 
-			this->clip_polygon_by_edge(p0, p1, tmp);
-			tmp.clip_polygon_by_edge(p1, p2, result);
+			this->clip_polygon_by_edge(p0, p1, tmp);  if (tmp.vertices.size() == 0) { result = tmp;  return; };
+			tmp.clip_polygon_by_edge(p1, p2, result); if (result.vertices.size() == 0) return;
 			result.clip_polygon_by_edge(p2, p3, tmp);
 			tmp.clip_polygon_by_edge(p3, p0, result);
 		}
@@ -819,6 +840,7 @@ namespace transport {
 			while (curP) {
 				if (curP->id[0] == sorted_vertices.size() - 1 || curP->id[1] == sorted_vertices.size() - 1 || curP->id[2] == sorted_vertices.size() - 1) {
 					curP = curP->nextInMesh;
+					if (curP) delete curP->prevInMesh;
 					continue;
 				}
 
@@ -866,14 +888,14 @@ namespace transport {
 		void save_svg(std::string filename, bool save_triangulation = true, bool save_voronoi = true, bool save_samples = true, bool save_ordering = false) {
 
 			FILE* f = fopen(filename.c_str(), "w+");
-			fprintf(f, "<svg xmlns = \"http://www.w3.org/2000/svg\" width = \"1000\" height = \"1000\">\n");
+			fprintf(f, "<svg xmlns = \"http://www.w3.org/2000/svg\" width = \"4000\" height = \"4000\">\n");
 
 			if (voronoi.size() != 0 && save_voronoi) {
 				fprintf(f, "<g>\n");
 				for (int i = 0; i < voronoi.size(); i++) {
 					fprintf(f, "<polygon points = \"");
 					for (int j = 0; j < voronoi[i].vertices.size(); j++) {
-						fprintf(f, "%3.3f, %3.3f ", (voronoi[i].vertices[j][0] * 1000), (1000 - voronoi[i].vertices[j][1] * 1000));
+						fprintf(f, "%3.3f, %3.3f ", (voronoi[i].vertices[j][0] * 4000), (4000 - voronoi[i].vertices[j][1] * 4000));
 					}
 					fprintf(f, "\"\nfill = \"#005BBB\" stroke = \"black\"/>\n");
 				}
@@ -886,7 +908,7 @@ namespace transport {
 				for (int i = 0; i < triangles.size(); i++) {
 					fprintf(f, "<polygon points = \"");
 					for (int j = 0; j < 3; j++) {
-						fprintf(f, "%u, %u ", (int)(vertices[triangles[i].id[j]][0] * 1000), (int)(1000 - vertices[triangles[i].id[j]][1] * 1000));
+						fprintf(f, "%u, %u ", (int)(vertices[triangles[i].id[j]][0] * 4000), (int)(4000 - vertices[triangles[i].id[j]][1] * 4000));
 					}
 					fprintf(f, "\"\nfill = \"none\" stroke = \"orange\" stroke-width=\"1\" />\n");
 				}
@@ -896,7 +918,7 @@ namespace transport {
 			if (sorted_vertices.size() != 0 && save_ordering) {
 				fprintf(f, "<g>\n");
 				for (int i = 0; i < sorted_vertices.size()-1; i++) {
-					fprintf(f, "<line x1=\"%u\" y1=\"%u\" x2=\"%u\" y2=\"%u\" stroke=\"black\" stroke-width=\"1\"  />", (int)(sorted_vertices[i][0] * 1000), (int)(1000 - sorted_vertices[i][1] * 1000), (int)(sorted_vertices[i+1][0] * 1000), (int)(1000 - sorted_vertices[i+1][1] * 1000));
+					fprintf(f, "<line x1=\"%u\" y1=\"%u\" x2=\"%u\" y2=\"%u\" stroke=\"black\" stroke-width=\"1\"  />", (int)(sorted_vertices[i][0] * 4000), (int)(4000 - sorted_vertices[i][1] * 4000), (int)(sorted_vertices[i+1][0] * 4000), (int)(4000 - sorted_vertices[i+1][1] * 4000));
 				}
 				fprintf(f, "</g>\n");
 			}
@@ -904,7 +926,7 @@ namespace transport {
 			if (vertices.size() != 0 && save_samples) {
 				fprintf(f, "<g>\n");
 				for (int i = 0; i < vertices.size(); i++) {
-					fprintf(f, "<circle cx=\"%u\" cy=\"%u\" r=\"2\" stroke=\"black\" stroke-width=\"1\" fill = \"red\" />", (int)(vertices[i][0] * 1000), (int)(1000 - vertices[i][1] * 1000));
+					fprintf(f, "<circle cx=\"%u\" cy=\"%u\" r=\"2\" stroke=\"black\" stroke-width=\"1\" fill = \"red\" />", (int)(vertices[i][0] * 4000), (int)(4000 - vertices[i][1] * 4000));
 				}
 				fprintf(f, "</g>\n");
 			}

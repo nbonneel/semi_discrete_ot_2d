@@ -153,7 +153,7 @@ void test_lloyd_with_density() {
 
 
 	//std::ifstream file("lionOrigami_highcontrast_blur2.bmp", std::ios::binary);
-	std::ifstream file("lionOrigami256.bmp", std::ios::binary);
+	std::ifstream file("lionOrigami.bmp", std::ios::binary);
 	std::vector<char> header(54);
 	file.read(header.data(), 54); // Read BMP header
 
