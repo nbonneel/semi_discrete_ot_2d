@@ -89,7 +89,7 @@ namespace transport {
 		double b = (p1[1] - p0[1]) * (p2[0] - p0[0]);
 		double delta = a - b;
 
-		double eps = (4 * std::numeric_limits<double>::epsilon() * (abs(a) + abs(b)));
+		double eps = (4 * std::numeric_limits<double>::epsilon() * (std::abs(a) + std::abs(b)));
 		if (delta > eps)
 			return 1;
 		if (delta < -eps)
