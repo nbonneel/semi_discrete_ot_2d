@@ -48,7 +48,7 @@ namespace transport {
 		}
 		bool operator<(const Vector& b) const {
 			if (coords[0] < b.coords[0] - 1E-12) return true;
-			if (fabs(coords[0] - b.coords[0]) < 1E-12) {
+			if (std::abs(coords[0] - b.coords[0]) < 1E-12) {
 				if (coords[1] < b.coords[1] - 1E-12) return true;
 			}
 			return false;
@@ -56,8 +56,8 @@ namespace transport {
 		double coords[2];
 	};
 	/*bool operator==(const Vector& a, const Vector& b) {
-		if (abs(a[0] - b[0]) > 1E-12) return false;
-		if (abs(a[1] - b[1]) > 1E-12) return false;
+		if (std::abs(a[0] - b[0]) > 1E-12) return false;
+		if (std::abs(a[1] - b[1]) > 1E-12) return false;
 		return true;
 	}*/
 	Vector operator*(double a, const Vector& B);
@@ -140,7 +140,7 @@ namespace transport {
 			for (size_t i = 0; i < Nv; i++) {
 				a += vertices[i][0] * vertices[(i + 1) % Nv][1] - vertices[(i + 1) % Nv][0] * vertices[i][1];
 			}
-			return fabs(a / 2.);
+			return std::abs(a / 2.);
 		}
 
 
@@ -235,8 +235,8 @@ namespace transport {
 
 										
 					int s = this->test_pixel_side(x, y, densityW, centroid_uniform, inCircleRad, outCircleRad); // right now, this filter doesn't speed up anything
-					//nb1 += abs(s);
-					//nb0 += 1 - abs(s);
+					//nb1 += std::abs(s);
+					//nb0 += 1 - std::abs(s);
 					if (s == -1) continue;
 					if (s == 1) {
 						if (integrate_square_dist) {
@@ -299,7 +299,7 @@ namespace transport {
 				s += (vertices[im][0] * vertices[i][1] - vertices[i][0] * vertices[im][1]) * sm;
 				im = i;
 			}
-			double v1 = fabs(s) / 12.;
+			double v1 = std::abs(s) / 12.;
 			return v1;
 		}
 
@@ -1112,7 +1112,7 @@ namespace transport {
 
 			for (int i = 0; i < vertices.size(); i++) {
 				double area = voronoi[i].area();
-				double diff = fabs(idealArea - area);
+				double diff = std::abs(idealArea - area);
 				if (diff > worstAreaDiff) {
 					worstAreaDiff = diff;
 				}
@@ -1132,7 +1132,7 @@ namespace transport {
 
 			for (int i = 0; i < vertices.size(); i++) {
 				double area = voronoi[i].area();
-				double diff = fabs(idealArea - area);
+				double diff = std::abs(idealArea - area);
 				sum += diff;
 			}
 			return sum/(vertices.size() * idealArea) * 100.;
@@ -1194,8 +1194,8 @@ namespace transport {
 			double stepY = dy > 0 ? 1 : -1;
 
 			// tDeltaX, tDeltaY for crossing one pixel
-			double tDeltaX = fabs(1.0 / dx);
-			double tDeltaY = fabs(1.0 / dy);
+			double tDeltaX = std::abs(1.0 / dx);
+			double tDeltaY = std::abs(1.0 / dy);
 
 			// Initial tMaxX, tMaxY for the first pixel's boundaries
 			double tMaxX = (stepX > 0 ? ceil(scaledP0[0]) - scaledP0[0] : scaledP0[0] - floor(scaledP0[0])) * tDeltaX;
@@ -1535,7 +1535,7 @@ namespace transport {
 						break;
 					}
 					grad[i] = 1.0 / N - a;
-					if (fabs(grad[i]) > worstarea) worstarea = fabs(grad[i]);
+					if (std::abs(grad[i]) > worstarea) worstarea = std::abs(grad[i]);
 				}
 				//std::cout << worstarea * N * 100 << std::endl;
 				if (worstarea * N * 100 < worst_area_relative_threshold_percent) {
