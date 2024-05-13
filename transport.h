@@ -117,7 +117,7 @@ namespace transport {
 
 
 	// "normal" orient 2d with 2x2 determinant. If within precision limits, just return 0
-	inline int orient_2d_filter(const Vector& p0, const Vector& p1, const Vector p2);
+	int orient_2d_filter(const Vector& p0, const Vector& p1, const Vector p2);
 
 	double integrateSquaredDistanceOver2DPixel(int pixX, int pixY, double imgW, const Vector& Pi);
 
