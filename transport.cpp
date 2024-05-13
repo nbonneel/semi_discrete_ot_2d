@@ -83,7 +83,7 @@ namespace transport {
 
 
 	// "normal" orient 2d with 2x2 determinant. If within precision limits, just return 0
-	inline int orient_2d_filter(const Vector& p0, const Vector& p1, const Vector p2) {
+	int orient_2d_filter(const Vector& p0, const Vector& p1, const Vector p2) {
 
 		double a = (p1[0] - p0[0]) * (p2[1] - p0[1]);
 		double b = (p1[1] - p0[1]) * (p2[0] - p0[0]);
